@@ -6,9 +6,9 @@ Windows 桌面笔记与文档阅读应用，**版本 0.11.0**。以仿真实体�
 
 ![书架](docs/shelf.png)
 
-| 阅读 | 看图 | 单词本 |
+| 阅读 | 看图 | PDF 阅读 |
 | --- | --- | --- |
-| ![阅读](docs/reading.png) | ![看图](docs/gallery.png) | ![单词本](docs/vocab.png) |
+| ![阅读](docs/reading.png) | ![看图](docs/gallery.png) | ![PDF 阅读](docs/pdf.png) |
 
 ---
 
