@@ -1,0 +1,508 @@
+/* ==========================================================================
+   统计 —— 打卡热力图与读写账本
+   配色全部走 base.css / lib/theme.ts 注入的令牌变量，深色主题（酒红皮革、
+   黑檀等）下同样成立；图表是 div + CSS，没有第三方图表库。
+   本文件的选择器一律以 .stats- 开头。
+   ========================================================================== */
+
+.stats-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+/* ------------------------------------------------------------- 页面标题 */
+
+.stats-head {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 26px 34px 15px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-app) 90%, transparent);
+  backdrop-filter: blur(7px);
+}
+
+.stats-head-main {
+  min-width: 0;
+}
+
+.stats-head h1 {
+  font-family: var(--font-serif);
+  font-size: 26px;
+  letter-spacing: 0.1em;
+}
+
+.stats-head p {
+  margin-top: 6px;
+  max-width: 660px;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--text-muted);
+}
+
+.stats-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.stats-head-tag {
+  margin-bottom: 3px;
+  padding: 3px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 99px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.stats-content {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 1180px;
+  padding: 24px 34px 62px;
+}
+
+/* ------------------------------------------------ 通用：卡片 / 标题 / 状态 */
+
+.stats-section {
+  padding: 18px 20px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-card);
+}
+
+/* 与 settings 的 .set-section 同节奏：标题贴一条分隔线，下面才是内容 */
+.stats-section > .section-title {
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid var(--border);
+}
+
+.stats-section > .section-title h3 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 15px;
+  font-weight: 660;
+  letter-spacing: 0.05em;
+  color: var(--text-primary);
+}
+
+.stats-section > .section-title h3 svg {
+  color: var(--accent);
+}
+
+.stats-section > .section-title p {
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.stats-section-body {
+  min-width: 0;
+  padding-top: 14px;
+}
+
+.stats-subhead {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 18px 0 9px;
+  font-size: 12px;
+  font-weight: 620;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.stats-subhead svg {
+  color: var(--accent);
+}
+
+.stats-empty {
+  padding: 14px 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.stats-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 80px 20px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.stats-error {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm) var(--radius) var(--radius) var(--radius-sm);
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--bg-surface));
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.stats-error > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.stats-error-text {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+/* --------------------------------------------------------- 1 打卡热力图 */
+
+.stats-heat {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.stats-heat-grid {
+  --stats-heat-cell: 12px;
+  --stats-heat-gap: 3px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* 月份条与下面的格子共用同一套列宽，所以左边也要空出星期标签那一列 */
+.stats-heat-months {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: var(--stats-heat-cell);
+  gap: var(--stats-heat-gap);
+  height: 13px;
+  margin-left: 20px;
+}
+
+.stats-heat-month {
+  font-size: 10px;
+  line-height: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.stats-heat-body {
+  display: flex;
+  gap: 6px;
+}
+
+.stats-heat-weekdays {
+  display: grid;
+  grid-template-rows: repeat(7, var(--stats-heat-cell));
+  gap: var(--stats-heat-gap);
+  width: 14px;
+  flex: none;
+}
+
+.stats-heat-weekday {
+  display: flex;
+  align-items: center;
+  font-size: 9.5px;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+/* 一列 = 一周，7 行 = 周一到周日；补的空格占位，所以列始终对齐 */
+.stats-heat-weeks {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, var(--stats-heat-cell));
+  grid-auto-columns: var(--stats-heat-cell);
+  gap: var(--stats-heat-gap);
+}
+
+.stats-heat-cell {
+  border: 1px solid transparent;
+  border-radius: 2.5px;
+  background: var(--bg-sunken);
+}
+
+.stats-heat-cell.is-l0 {
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-sunken) 82%, var(--bg-app));
+}
+
+.stats-heat-cell.is-l1 {
+  background: color-mix(in srgb, var(--accent) 24%, var(--bg-sunken));
+}
+
+.stats-heat-cell.is-l2 {
+  background: color-mix(in srgb, var(--accent) 46%, var(--bg-sunken));
+}
+
+.stats-heat-cell.is-l3 {
+  background: color-mix(in srgb, var(--accent) 70%, var(--bg-sunken));
+}
+
+.stats-heat-cell.is-l4 {
+  background: var(--accent);
+}
+
+/* 补位的空格子：不画边，免得看起来像"那天有记录" */
+.stats-heat-cell.is-blank {
+  border-color: transparent;
+  background: transparent;
+}
+
+.stats-heat-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 176px;
+  flex: 1 1 176px;
+  max-width: 280px;
+}
+
+.stats-heat-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-sunken) 42%, var(--bg-app));
+  box-shadow: var(--shadow-soft);
+}
+
+.stats-heat-stat-value {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.stats-heat-stat-value strong {
+  font-size: 23px;
+  color: var(--accent);
+}
+
+.stats-heat-stat-value.is-duration {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  font-weight: 620;
+}
+
+.stats-heat-stat-label {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.stats-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.stats-legend .stats-legend-cell {
+  width: 11px;
+  height: 11px;
+}
+
+/* ----------------------------------------------------------- 2/3 数字卡 */
+
+.stats-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(166px, 1fr));
+  gap: 12px;
+}
+
+.stats-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 13px 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-sunken) 42%, var(--bg-app));
+  box-shadow: var(--shadow-soft);
+}
+
+.stats-card-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.stats-card-label svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.stats-card-value {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  font-family: var(--font-serif);
+  font-size: 23px;
+  font-weight: 660;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.stats-card-value.is-compact {
+  font-family: var(--font-sans);
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.stats-card-value em {
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  font-style: normal;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.stats-card-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------- 列表（各行） */
+
+.stats-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.stats-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-soft);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
+}
+
+.stats-row:hover {
+  border-color: var(--border-strong);
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--bg-surface));
+}
+
+.stats-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.stats-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.stats-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-row-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stats-row-meter {
+  width: 92px;
+  flex: none;
+}
+
+.stats-row-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 84px;
+}
+
+.stats-row-value {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.stats-row-note {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------- 窄窗口 */
+
+@media (max-width: 900px) {
+  .stats-head,
+  .stats-content {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .stats-heat-side {
+    max-width: none;
+    flex-basis: 100%;
+  }
+}

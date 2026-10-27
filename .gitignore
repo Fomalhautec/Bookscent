@@ -1,0 +1,53 @@
+# 书香笔记 Bookscent —— 版本库忽略清单
+# 约定：只提交源码与工程配置；依赖、构建产物、安装包、本地备份、验证截图一律不入库。
+
+# ---------------------------------------------------------------- 依赖与构建产物
+node_modules/
+out/
+release/
+dist/
+.vite/
+.eslintcache
+
+# ------------------------------------- 本地备份与安装包（体积极大，绝不入库）
+# backups/ 是每个版本的源码快照 + 三件套安装包，release/ 是 electron-builder 的输出，
+# 两者加起来有数 GB：一旦提交，仓库就没法克隆了。
+backups/
+*.exe
+*.blockmap
+*.asar
+*.zst
+*.zstd
+
+# ---------------------------------------------------------------- 验证与截图产物
+shots/
+shots-real/
+shots-html/
+shots-verify/
+shots-vfy/
+samples/
+.gui-probe/
+.smoke-sandbox/
+.electron-verify/
+# 词汇解析离线验算的中间产物（由 scripts/check-vocab-parse.mjs 用 esbuild 生成）
+scripts/vocab.mjs
+*.log
+
+# ---------------------------------------------------------------- 个人环境
+# .npmrc 里通常是本机的镜像地址（国内用 npmmirror 会快很多），不该强加给所有贡献者。
+# 保留在本地即可；CI 用官方 registry。
+.npmrc
+
+# ---------------------------------------------------------------- 编辑器与系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 别的程序以本目录为工作目录时误建的目录（比如名字就叫 %SystemDrive% 的那个）
+%SystemDrive%/
+NVIDIA Corporation/
+
+# 说明：build/icon.ico 与 build/icon.png **要**入库 —— 从干净克隆打包时它们得在；
+# 丢了可以用 `pnpm icon` 重新生成。

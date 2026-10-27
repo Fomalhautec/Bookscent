@@ -1,0 +1,3363 @@
+/* ==========================================================================
+   仿真实体书架
+   —— 书架内壁的木质纹理、木板的厚度与高光、书脊的圆柱受光与竹节，
+      全部由主题令牌推导，因此换书架主题=换一整套木作。
+   ========================================================================== */
+
+/*
+ * 「书房墙面」。
+ * 第一版把木纹做得太实，书少的时候空墙会变成一片扎眼的斜条纹；
+ * 现在墙面只留「从上往下变亮」的柔和过渡，纹理交给书架格内的凹槽去表达。
+ */
+.shelf-view {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /*
+   * 横向也由这个元素滚（连续书柜那一排书架会横向溢出）。
+   *
+   * 关键在于它**高度就是视口高度**，所以横向滚动条会固定在屏幕下方；
+   * 如果让内容高度的内层容器去横滚，滚动条就跑到书柜最下沿去了。
+   * 宽度不会因此变化：竖向滚动条槽已经用 scrollbar-gutter 恒定预留，
+   * 横向滚动条只吃高度不吃宽度，书架装箱不受影响。
+   */
+  overflow-x: auto;
+  /*
+   * 永远给滚动条留出位置。
+   *
+   * 这是"书架自己排布"能收敛的关键：宽度决定每行放几本，放几本又决定总高度，
+   * 总高度再决定要不要出滚动条 —— 而出滚动条会让可用宽度少十几像素，于是又重排。
+   * 滚动条若"按需出现"，这个环就会自激：界面卡死、ResizeObserver 疯狂回调
+   * （0.9.0 加阅读进度时内容高度一变正好踩中，CDP 求值直接超时）。
+   * 恒留滚动条槽，宽度就是一个定值，环断掉。
+   */
+  scrollbar-gutter: stable;
+  /* 书架不是文档：书脊上的书名、铭牌、筛选面板都不该能被框选或拖走 */
+  user-select: none;
+  -webkit-user-select: none;
+  /*
+   * 画在滚动容器自己的背景上，而不是绝对定位的伪元素里 ——
+   * 元素自身的背景默认不随内容滚动，书架往上滑时墙面才会留在原处。
+   */
+  background-color: var(--bg-app);
+  /* 工具栏（30 + 8×2 + 1 边框）的高度：批量条靠它把自己粘在工具栏正下方 */
+  --shelf-toolbar-h: 47px;
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-app) 80%, var(--border-strong)) 0%,
+    var(--bg-app) 38%,
+    var(--bg-app) 100%
+  );
+}
+
+html[data-texture='paper'] .shelf-view {
+  background-image: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-app) 84%, var(--border-strong)) 0%,
+      var(--bg-app) 40%
+    ),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--border) 12%, transparent) 0 1px, transparent 1px 5px);
+}
+
+html[data-texture='linen'] .shelf-view {
+  background-image: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg-app) 84%, var(--border-strong)) 0%,
+      var(--bg-app) 40%
+    ),
+    repeating-linear-gradient(45deg, color-mix(in srgb, var(--border) 10%, transparent) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--border) 8%, transparent) 0 1px, transparent 1px 4px);
+}
+
+html[data-texture='stone'] .shelf-view {
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg-app) 80%, var(--border-strong)) 0%,
+    var(--bg-app) 44%
+  );
+}
+
+html[data-texture='gradient'] .shelf-view {
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--shelf-back) 26%, var(--bg-app)) 0%,
+    var(--bg-app) 55%
+  );
+}
+
+html[data-texture='wood'] .shelf-view {
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--shelf-back) 20%, var(--bg-app)) 0%,
+    var(--bg-app) 42%
+  );
+}
+
+.shelf-scroll {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 0 0;
+}
+
+.shelf-unit {
+  position: relative;
+}
+
+/* --------------------------------------------------------------- 每层 */
+
+.shelf-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  /*
+   * 下边距 = 木板高度（25px）。
+   * 木板是从这一层底部往下挂 25px 的，留 32px 就会在木板和下一层内壁之间
+   * 露出 7px 墙面 —— 那就是"层与层之间的缝隙"。取 25px 正好接上。
+   */
+  margin: 0 var(--row-inset, 0px) 25px;
+  padding: 0 30px;
+  isolation: isolate;
+}
+
+/* 书架内侧：一个往后退的凹槽。
+   木纹始终存在（由 --shelf-wood-* 推出），材质只改变纹理的性格。 */
+/*
+ * 格内两侧的暗影拆成左右两层，并做成变量。
+ * 连续书柜里格与格相接的地方要把这两层关掉，否则每个格子都在自己边上压一道影，
+ * 拼起来就成了两格之间一条明显的缝。
+ */
+:root {
+  --cavity-left: linear-gradient(90deg, rgba(0, 0, 0, 0.28) 0%, transparent 6%);
+  --cavity-right: linear-gradient(270deg, rgba(0, 0, 0, 0.28) 0%, transparent 6%);
+}
+
+.shelf-row::before {
+  content: '';
+  position: absolute;
+  inset: 0 -10px -4px;
+  z-index: 0;
+  border-radius: 3px 3px 0 0;
+  background-color: var(--shelf-back);
+  background-image:
+    linear-gradient(
+      180deg,
+      var(--shelf-cavity) 0%,
+      color-mix(in srgb, var(--shelf-cavity) 45%, transparent) 30%,
+      transparent 58%
+    ),
+    var(--cavity-left),
+    var(--cavity-right),
+    repeating-linear-gradient(
+      90.6deg,
+      color-mix(in srgb, var(--shelf-wood-3) 34%, transparent) 0 1px,
+      transparent 1px 13px
+    ),
+    repeating-linear-gradient(
+      89.2deg,
+      color-mix(in srgb, var(--shelf-wood-1) 26%, transparent) 0 4px,
+      transparent 4px 43px
+    ),
+    linear-gradient(180deg, var(--shelf-wood-2) 0%, color-mix(in srgb, var(--shelf-wood-3) 82%, #000) 100%);
+  box-shadow:
+    inset 0 12px 24px -10px rgba(0, 0, 0, 0.62),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+
+html[data-texture='paper'] .shelf-row::before {
+  background-image:
+    linear-gradient(180deg, var(--shelf-cavity) 0%, transparent 58%),
+    var(--cavity-left),
+    var(--cavity-right),
+    repeating-linear-gradient(0deg, color-mix(in srgb, var(--shelf-wood-3) 46%, transparent) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--shelf-wood-3) 30%, transparent) 0 1px, transparent 1px 7px),
+    linear-gradient(180deg, var(--shelf-wood-2) 0%, var(--shelf-wood-3) 100%);
+}
+
+html[data-texture='linen'] .shelf-row::before {
+  background-image:
+    linear-gradient(180deg, var(--shelf-cavity) 0%, transparent 58%),
+    var(--cavity-left),
+    var(--cavity-right),
+    repeating-linear-gradient(45deg, color-mix(in srgb, var(--shelf-wood-3) 40%, transparent) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(-45deg, color-mix(in srgb, var(--shelf-wood-1) 34%, transparent) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, var(--shelf-wood-2) 0%, var(--shelf-wood-3) 100%);
+}
+
+html[data-texture='stone'] .shelf-row::before {
+  background-image:
+    linear-gradient(180deg, var(--shelf-cavity) 0%, transparent 58%),
+    var(--cavity-left),
+    var(--cavity-right),
+    repeating-linear-gradient(104deg, color-mix(in srgb, var(--shelf-wood-3) 44%, transparent) 0 2px, transparent 2px 11px),
+    linear-gradient(180deg, var(--shelf-wood-2) 0%, var(--shelf-wood-3) 100%);
+}
+
+html[data-texture='flat'] .shelf-row::before,
+html[data-texture='gradient'] .shelf-row::before {
+  background-image:
+    linear-gradient(180deg, var(--shelf-cavity) 0%, transparent 60%),
+    linear-gradient(180deg, var(--shelf-wood-2) 0%, var(--shelf-wood-3) 100%);
+}
+
+.shelf-books {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  min-height: 0;
+  padding-left: 4px;
+}
+
+/* --------------------------------------------------------------- 书立 */
+
+/*
+ * 书立：一块**单侧**挡板 + 它外侧的一段空位。
+ *
+ * 现实里书立是单边的：一块板压在某一摞书的一头。
+ * 想隔出一段空间，就是一本书加「右书立」、后面那本加「左书立」，
+ * 两个书立面对面，中间那段自然就是空间。
+ *
+ * 高度必须用 align-self: stretch，**不能写 height: 100%**：
+ * .shelf-books 的高度是内容撑出来的（auto），百分比高度在 auto 高度的
+ * 父元素里会退化成 auto，而这块书立的两个子元素都是绝对定位 ——
+ * 结果就是整块高度为 0：看不见，也点不到。
+ * 这正是"只能添加、其它操作全无效"的原因。
+ */
+.shelf-bookend {
+  position: relative;
+  display: block;
+  flex: none;
+  align-self: stretch;
+  cursor: pointer;
+}
+
+.shelf-bookend-post {
+  position: absolute;
+  bottom: 0;
+  width: 5px;
+  height: 72%;
+  border-radius: 1px 1px 0 0;
+  background: linear-gradient(90deg, #6f767f 0%, #cdd4dc 45%, #5f666e 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.22),
+    0 1px 3px rgba(0, 0, 0, 0.32);
+}
+
+/* 右书立：板在最左边，紧贴左边那本书；空位在右边 */
+.shelf-bookend.is-right .shelf-bookend-post {
+  left: 0;
+}
+
+/* 左书立：板在最右边，紧贴右边那本书；空位在左边 */
+.shelf-bookend.is-left .shelf-bookend-post {
+  right: 0;
+}
+
+/* 脚：朝空位那一侧伸出去，现实里的书立就是这么支住的 */
+.shelf-bookend-foot {
+  position: absolute;
+  bottom: 0;
+  width: 58%;
+  height: 5px;
+  border-radius: 1px;
+  background: linear-gradient(180deg, #b6bdc6 0%, #767d86 100%);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.shelf-bookend.is-right .shelf-bookend-foot {
+  left: 0;
+}
+
+.shelf-bookend.is-left .shelf-bookend-foot {
+  right: 0;
+}
+
+/* 要求在此另起一行的书立：给个虚线的暗记，让人知道这里断开了 */
+.shelf-bookend.is-break::after {
+  content: '';
+  position: absolute;
+  top: 4%;
+  bottom: 8%;
+  left: 50%;
+  width: 1px;
+  background: repeating-linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 60%, transparent) 0 4px,
+    transparent 4px 9px
+  );
+}
+
+.shelf-bookend:hover .shelf-bookend-post,
+.shelf-bookend:hover .shelf-bookend-foot {
+  background: linear-gradient(90deg, #8a6b3a 0%, #e6c98d 45%, #7a5c30 100%);
+}
+
+.shelf-bookend.is-dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+/* --------------------------------------------------------------- 木板 */
+
+.shelf-plank {
+  position: absolute;
+  left: -10px;
+  right: -10px;
+  bottom: -25px;
+  z-index: 4;
+  height: 25px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+}
+
+.shelf-plank-top {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 4px;
+  border-radius: 2px 2px 0 0;
+  background: linear-gradient(180deg, var(--shelf-plank-top), var(--shelf-plank));
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--shelf-plank-top) 55%, #fff) inset;
+}
+
+.shelf-plank-face {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 4px;
+  bottom: 0;
+  border-radius: 0 0 4px 4px;
+  background-color: var(--shelf-plank);
+  background-image:
+    linear-gradient(180deg, color-mix(in srgb, var(--shelf-plank) 92%, #fff) 0%, var(--shelf-plank) 38%, var(--shelf-plank-edge) 100%),
+    repeating-linear-gradient(90.5deg, color-mix(in srgb, var(--shelf-plank-edge) 26%, transparent) 0 1px, transparent 1px 23px);
+}
+
+.shelf-plank::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -5px;
+  height: 6px;
+  background: color-mix(in srgb, var(--shelf-plank-edge) 45%, transparent);
+  filter: blur(3px);
+}
+
+/* 木板上的黄铜铭牌：这是"这是哪一层"唯一的文字，必须读得清 */
+.shelf-plaque-name,
+.shelf-plaque-count {
+  position: relative;
+  z-index: 2;
+  font-family: var(--font-serif);
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  white-space: nowrap;
+}
+
+.shelf-plaque-name {
+  padding: 2px 11px;
+  border-radius: 3px;
+  color: color-mix(in srgb, var(--shelf-plank-edge) 72%, #000);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--shelf-plank-top) 92%, #fff) 0%,
+    color-mix(in srgb, var(--shelf-plank-top) 62%, var(--shelf-plank)) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.22),
+    0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.shelf-plaque-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--shelf-plank-edge) 62%, #000);
+  opacity: 0.9;
+}
+
+html[data-shelf-theme='ebony'] .shelf-plaque-name,
+html[data-shelf-theme='walnut'] .shelf-plaque-name,
+html[data-shelf-theme='burgundy'] .shelf-plaque-name,
+html[data-shelf-theme='midnight'] .shelf-plaque-name,
+html[data-shelf-theme='stone'] .shelf-plaque-name,
+html[data-shelf-theme='bamboo'] .shelf-plaque-name {
+  color: color-mix(in srgb, var(--shelf-plank-top) 80%, #fff);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(0, 0, 0, 0.32));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+html[data-shelf-theme='ebony'] .shelf-plaque-count,
+html[data-shelf-theme='walnut'] .shelf-plaque-count,
+html[data-shelf-theme='midnight'] .shelf-plaque-count,
+html[data-shelf-theme='stone'] .shelf-plaque-count,
+html[data-shelf-theme='bamboo'] .shelf-plaque-count {
+  color: color-mix(in srgb, var(--shelf-plank-top) 70%, #fff);
+}
+
+.shelf-tail {
+  height: 46px;
+}
+
+/* --------------------------------------------------------------- 书本 */
+
+.book {
+  position: relative;
+  flex: none;
+  width: var(--book-footprint, var(--spine-w));
+  height: var(--spine-h);
+  transform: rotate(var(--spine-tilt, 0deg));
+  transform-origin: bottom center;
+  cursor: pointer;
+  outline: none;
+  -webkit-user-drag: none;
+}
+
+.book img,
+.book span {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.book.is-animated {
+  transition: transform var(--dur) var(--ease);
+}
+
+.book:hover {
+  /* 抬起来的时候保持竖着的方向，所以先平移再旋转 */
+  transform: translateY(-9px) rotate(var(--spine-tilt, 0deg));
+}
+
+.book:focus-visible .spine {
+  box-shadow: 0 0 0 2px var(--accent), var(--shadow-book);
+}
+
+.book-3d {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  /*
+   * 悬停时微微转过来一点（纯视觉反馈）。
+   * 原先这里还叠了一个 --facing-rot 给「自定义朝向」用 —— 那个模式已删除。
+   */
+  transform: perspective(1200px) rotateY(var(--hover-rot, 0deg));
+  transition: transform var(--dur) var(--ease), filter var(--dur) var(--ease);
+}
+
+.book:hover .book-3d {
+  --hover-rot: -13deg;
+}
+
+.book.is-dragging {
+  opacity: 0.45;
+}
+
+/* 拖到别的书架层上面时，整层亮起来提示"松手就搬到这儿" */
+.shelf-unit.is-drop-shelf .shelf-row::before {
+  background-color: color-mix(in srgb, var(--accent) 22%, var(--shelf-back));
+  box-shadow:
+    inset 0 0 0 2px color-mix(in srgb, var(--accent) 62%, transparent),
+    inset 0 12px 24px -10px rgba(0, 0, 0, 0.5);
+}
+
+.shelf-unit.is-drop-shelf .shelf-plank {
+  filter: brightness(1.08);
+}
+
+.book.is-drop-before::before,
+.book.is-drop-after::after {
+  content: '';
+  position: absolute;
+  top: 6%;
+  bottom: 4%;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 70%, transparent);
+  z-index: 6;
+}
+
+.book.is-drop-before::before {
+  left: -3px;
+}
+
+.book.is-drop-after::after {
+  right: -3px;
+}
+
+/* 封面面：`cover` 朝向时平铺，`angled` 朝向时竖起来当作 3D 盒子的一个面 */
+.book-cover-face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 2px 3px 3px 2px;
+  box-shadow: var(--shadow-book);
+}
+
+.book-cover-face .cover {
+  width: 100%;
+  height: 100%;
+}
+
+.cover-face-badge,
+.cover-face-mark {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.86);
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.cover-face-badge {
+  left: 6px;
+  bottom: 6px;
+  padding: 2px 5px;
+}
+
+.cover-face-mark {
+  right: 6px;
+  top: 6px;
+  width: 18px;
+  height: 18px;
+  color: var(--accent);
+}
+
+.book.is-missing {
+  opacity: 0.45;
+  filter: grayscale(0.7);
+}
+
+.book.is-finished .spine-badge {
+  opacity: 0.5;
+}
+
+/* 书脊本体：一个受了光的圆柱面。
+   内部一律用绝对定位 —— 竖排文字遇上 flex 的交叉轴拉伸会算出意外的宽度，
+   显式给定字号与盒子才是可控的。 */
+.spine {
+  position: absolute;
+  inset: 0;
+  border-radius: 2px 3px 3px 2px;
+  background: var(--spine-bg);
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+  box-shadow: inset -1px 0 2px rgba(0, 0, 0, 0.35), inset 1px 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.book.has-shadow .spine {
+  box-shadow:
+    var(--shadow-book),
+    inset -1px 0 2px rgba(0, 0, 0, 0.35),
+    inset 1px 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.spine-texture {
+  position: absolute;
+  inset: 0;
+  background-image: var(--spine-texture);
+  opacity: 0.55;
+  mix-blend-mode: overlay;
+  pointer-events: none;
+}
+
+.spine-photo-veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.42) 0%,
+    rgba(0, 0, 0, 0.06) 28%,
+    rgba(255, 255, 255, 0.08) 52%,
+    rgba(0, 0, 0, 0.3) 100%
+  );
+  pointer-events: none;
+}
+
+.spine-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.34) 0%,
+    rgba(0, 0, 0, 0.05) 22%,
+    rgba(255, 255, 255, 0.1) 48%,
+    rgba(0, 0, 0, 0.12) 74%,
+    rgba(0, 0, 0, 0.34) 100%
+  );
+  pointer-events: none;
+}
+
+/* 平板书脊：左右弧面高光整个去掉，才真的是"平"的 */
+/* 平直书脊：不要圆柱面明暗，贴图上的假高光也一并去掉 */
+.book.is-flat-spine .spine-shade,
+.book.is-flat-spine .spine-photo-veil {
+  display: none;
+}
+
+.book-preset-flat .spine-shade,
+.book-preset-flat .spine-texture {
+  display: none;
+}
+
+/* 书脊顶端的堵头布 */
+.spine-cap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 4px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--spine-ink) 55%, #000),
+    var(--spine-ink),
+    color-mix(in srgb, var(--spine-ink) 55%, #000)
+  );
+  opacity: 0.55;
+}
+
+/* 竹节：凸起的横棱 */
+.spine-ribs {
+  position: absolute;
+  inset: 8px 0 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.spine-ribs i {
+  display: block;
+  height: 5px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.22) 0%,
+    rgba(0, 0, 0, 0.28) 58%,
+    rgba(255, 255, 255, 0.1) 100%
+  );
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+}
+
+.book-ornament-ribs .spine-ribs {
+  /* 竹节只占首尾两段，中间留给书名 */
+  inset: 6% 0 6%;
+}
+
+/* 横带：书脊头尾各两道烫金线，中间留出书名 */
+.spine-bands {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spine-bands i {
+  position: absolute;
+  left: 13%;
+  right: 13%;
+  height: 2.5px;
+  border-radius: 1px;
+  background: var(--spine-foil);
+  opacity: 0.78;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+}
+
+.spine-bands i:nth-child(1) {
+  top: 12%;
+}
+.spine-bands i:nth-child(2) {
+  top: 17.5%;
+}
+.spine-bands i:nth-child(3) {
+  bottom: 17.5%;
+}
+.spine-bands i:nth-child(4) {
+  bottom: 12%;
+}
+
+/* 烫金细线：头尾各一组双线 */
+.spine-foil-lines {
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  height: 8px;
+  pointer-events: none;
+  border-top: 1.5px solid var(--spine-foil);
+  border-bottom: 1.5px solid var(--spine-foil);
+  opacity: 0.82;
+}
+
+.spine-foil-lines.is-top {
+  top: 8%;
+}
+
+.spine-foil-lines.is-bottom {
+  bottom: 8%;
+}
+
+/*
+ * 纸质标签。
+ * 它贴在书脊的弧面上，所以标签自己也要跟着书脊一起受光 ——
+ * 见下面的 ::after，把书脊那道圆柱面明暗叠在标签上面，
+ * 否则标签是一块死平的纸，跟书脊完全脱开。
+ */
+.spine-label {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 14%;
+  bottom: 26%;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 4px 2px;
+  border-radius: 1px;
+  background: linear-gradient(
+    170deg,
+    color-mix(in srgb, var(--spine-foil) 26%, #f6efe0),
+    color-mix(in srgb, var(--spine-foil) 46%, #e6dcc6)
+  );
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+/* 让纸质标签跟着书脊的弧度走 */
+.spine-label::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.34) 0%,
+    rgba(0, 0, 0, 0.05) 22%,
+    rgba(255, 255, 255, 0.1) 48%,
+    rgba(0, 0, 0, 0.12) 74%,
+    rgba(0, 0, 0, 0.34) 100%
+  );
+  /* 纸比皮革亮一点，同样的明暗要压轻一些才自然 */
+  opacity: 0.82;
+  mix-blend-mode: multiply;
+}
+
+/*
+ * 标签上的书名。
+ * 宽度由 fitSpineTitle 按"标签里放得下几列"算好写进内联样式：
+ * 不给宽度的话 vertical-rl 只会排成一列然后纵向溢出被裁掉。
+ * 高度撑满 + text-align:center，文字才会在标签里上下居中。
+ */
+.spine-label-text {
+  writing-mode: vertical-rl;
+  /* 中文正立、英文与数字横躺 */
+  text-orientation: mixed;
+  height: 100%;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-weight: 620;
+  line-height: 1.14;
+  letter-spacing: 0.04em;
+  color: color-mix(in srgb, var(--spine-foil) 30%, #2a1f10);
+  overflow: hidden;
+}
+
+/* 书名：竖排用 block + text-align，长书名自然折成多列而不是被裁掉开头 */
+.spine-title {
+  position: absolute;
+  left: 5%;
+  right: 5%;
+  top: 13%;
+  bottom: 24%;
+  z-index: 2;
+  display: block;
+  padding: 0;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-weight: 620;
+  line-height: 1.14;
+  color: var(--spine-ink);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.28);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.book.is-vertical .spine-title {
+  writing-mode: vertical-rl;
+  /*
+   * vertical-rl 的块流方向是从右往左，盒子再宽文字也只会贴着右边缘，
+   * 这就是"书名偏右"的根因。这里把盒子收紧到刚好放下这些列（宽度由
+   * fitSpineTitle 算好写进内联样式），再整体水平居中。
+   */
+  left: 50%;
+  right: auto;
+  max-width: 92%;
+  transform: translateX(-50%);
+}
+
+.book.text-upright .spine-title {
+  /* 保留这个类只为兼容旧数据；竖排统一走 mixed（中文正立、西文与数字横躺） */
+  text-orientation: mixed;
+  letter-spacing: 0.04em;
+}
+
+.book.text-mixed .spine-title {
+  text-orientation: mixed;
+  letter-spacing: 0.01em;
+}
+
+.book.is-horizontal .spine-title {
+  left: 50%;
+  top: 50%;
+  right: auto;
+  bottom: auto;
+  width: calc(var(--spine-h) - 48px);
+  height: calc(var(--spine-w) - 2px);
+  transform: translate(-50%, -50%) rotate(90deg);
+  writing-mode: horizontal-tb;
+  text-orientation: mixed;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  letter-spacing: 0.04em;
+}
+
+/*
+ * 书名区按装饰类型让位。
+ * 书脊上的装饰（横带 / 竹节 / 烫金线 / 纸质标签）各有自己的位置，
+ * 书名区必须避开它们，否则会压在烫金线上，或者把竹节劈成两半。
+ */
+.book-ornament-bands .spine-title {
+  top: 22%;
+  bottom: 27%;
+}
+
+/* 竹节分首尾两段，书名落在中间那一段里 */
+.book-ornament-ribs .spine-title {
+  top: 35%;
+  bottom: 35%;
+}
+
+.book-ornament-foil .spine-title {
+  top: 15%;
+  bottom: 20%;
+}
+
+/* 纸质标签自己就是书名，普通书名不再渲染 */
+.book-ornament-label .spine-title {
+  display: none;
+}
+
+.spine-author {
+  position: absolute;
+  left: 50%;
+  right: auto;
+  bottom: var(--spine-author-bottom, 21px);
+  /* 同样是对齐问题：竖排单列，把盒子收紧成一列宽再居中 */
+  width: 13px;
+  transform: translateX(-50%);
+  height: 15px;
+  z-index: 2;
+  font-size: 9.5px;
+  font-family: var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--spine-ink);
+  opacity: 0.7;
+  writing-mode: vertical-rl;
+  /* 署名里的西文与数字同样横躺 */
+  text-orientation: mixed;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.book.text-mixed .spine-author {
+  text-orientation: mixed;
+}
+
+/* 署名也要避开装饰：横带 / 烫金线有自己的位置，竹节和标签则根本没地方放 */
+.book-ornament-bands .spine-author {
+  --spine-author-bottom: 23%;
+}
+
+.book-ornament-foil .spine-author {
+  --spine-author-bottom: 16%;
+}
+
+.book-ornament-ribs .spine-author,
+.book-ornament-label .spine-author {
+  display: none;
+}
+
+/* 格式标记同理：底部被装饰占住时挪到上面去 */
+.book-ornament-bands .spine-badge,
+.book-ornament-foil .spine-badge {
+  bottom: auto;
+  top: 6%;
+}
+
+.book.is-horizontal .spine-author {
+  writing-mode: horizontal-tb;
+  left: 50%;
+  right: auto;
+  bottom: 6px;
+  transform: translateX(-50%);
+  max-width: var(--spine-w);
+}
+
+.spine-badge {
+  position: absolute;
+  left: 50%;
+  bottom: 5px;
+  transform: translateX(-50%);
+  z-index: 2;
+  padding: 1px 3px;
+  border: 1px solid color-mix(in srgb, var(--spine-ink) 45%, transparent);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  line-height: 1.35;
+  letter-spacing: 0.04em;
+  color: var(--spine-ink);
+  opacity: 0.72;
+  white-space: nowrap;
+}
+
+.spine-mark {
+  position: absolute;
+  z-index: 3;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  color: var(--spine-foil);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.4));
+}
+
+/* --------------------------------------------------------- 阅读进度 */
+
+/*
+ * 两种画法各管一种朝向：
+ *   - 书脊朝外（.progress-spine）：书脊只有 20–40px 宽，塞不下圆环，
+ *     所以贴着书脊左缘画一条与书等高的细竖条，从底部往上按 % 填满；
+ *   - 封面朝外（.progress-ring）：地方够，画一个圆环 + 环心百分比，
+ *     压在封面右下角。
+ * 进度为 0 或不是书籍（笔记）时父组件根本不渲染这些节点，不会留空壳。
+ */
+
+.progress-spine {
+  position: absolute;
+  left: 2px;
+  top: 3px;
+  bottom: 3px;
+  width: 3.5px;
+  z-index: 3;
+  border-radius: 2px;
+  /* 轨道：半透明底色 + 一道内描边，让没走到的部分也能看出"这里有条进度"。
+     底色取自这本书书脊自己的墨色 —— 浅色书脊上偏深、深色书脊上偏浅，
+     两种主题都留得住；墨色取不到时退回 --text-muted。 */
+  background: color-mix(in srgb, var(--spine-ink, var(--text-muted)) 26%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--spine-ink, var(--text-muted)) 18%, transparent);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+/* 填充：从底部按百分比长上去。百分比由 BookSpine 挂在 `.book` 上
+   （`--progress-pct`）—— 伪元素只能继承到自己祖先链上的自定义属性，
+   挂在圆环元素上是取不到的。上端掺一点书脊的烫金色，
+   再在上缘补一道亮边：轨道那边的 overflow: hidden 会把向外的辉光裁掉，
+   所以"进度走到哪儿了"就靠这道亮边表示，深色书脊/深色主题下也看得清。 */
+.progress-spine::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--progress-pct, 0%);
+  border-radius: 2px;
+  background: linear-gradient(
+    to top,
+    var(--accent),
+    color-mix(in srgb, var(--accent) 62%, var(--spine-foil, transparent))
+  );
+  /* 只要这道内亮边：向外的辉光会被轨道自己的 overflow: hidden 裁掉，写了也看不见 */
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #ffffff 52%, var(--accent));
+  transition: height var(--dur) var(--ease);
+}
+
+.progress-ring {
+  --progress-size: 30px;
+  --progress-stroke: 3px;
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 4;
+  width: var(--progress-size);
+  height: var(--progress-size);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  /* 外圈一道半透明深色，任何封面颜色上都能框出圆环的边界 */
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.28),
+    0 2px 6px rgba(0, 0, 0, 0.3);
+  /* 圆环 = 进度色扇形 + 半透明底环；起点朝上，顺时针走 */
+  background: conic-gradient(
+    from 0deg,
+    var(--accent) 0 var(--progress-pct, 0%),
+    color-mix(in srgb, var(--accent) 26%, transparent) var(--progress-pct, 0%) 100%
+  );
+}
+
+/* 内层实心圆：既是遮罩（把扇形掏成环），也是百分比的底 */
+.progress-ring::before {
+  content: '';
+  position: absolute;
+  inset: var(--progress-stroke);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+}
+
+.progress-ring-label {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+/* 列表视图：不比书脊宽，所以不画圆环，改成书名的下一行一条横条 + 百分比。
+   颜色和书脊上那条细条是同一套（--accent）。 */
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+}
+
+.progress-row-track {
+  position: relative;
+  flex: 1;
+  min-width: 40px;
+  max-width: 220px;
+  height: 4px;
+  border-radius: 99px;
+  background: var(--accent-softer);
+  overflow: hidden;
+}
+
+.progress-row-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: var(--progress-pct, 0%);
+  border-radius: 99px;
+  background: var(--accent);
+  transition: width var(--dur) var(--ease);
+}
+
+.progress-row-text {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--accent);
+  opacity: 0.9;
+}
+
+/* 平直书脊没有那道圆柱明暗，细条再贴紧一点 */
+.book.is-flat-spine .progress-spine {
+  left: 1.5px;
+  width: 3px;
+}
+
+/* 细条会占掉书脊左边几个像素，书名/作者往右让一点，免得字压在条上。
+   横排书名那个盒子整体转了 90°，padding-left 在它那里是"往下推"而不是"往右推"，
+   所以单独排掉它。 */
+.book.has-progress .spine-title,
+.book.has-progress .spine-author,
+.book.has-progress .spine-badge {
+  padding-left: 5px;
+}
+
+.book.has-progress.is-horizontal .spine-title {
+  padding-left: 0;
+}
+
+/* 书本落在木板上的投影 */
+.spine-foot {
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  bottom: -6px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(0, 0, 0, 0.42), transparent 78%);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.book:not(.has-shadow) .spine-foot {
+  display: none;
+}
+
+/* ------------------------------------------- 抽出预览（portal 到 body） */
+
+.cover-peek {
+  position: fixed;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-elevated) 94%, transparent);
+  backdrop-filter: blur(7px);
+  box-shadow: var(--shadow-float);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(8px) scale(0.975);
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.cover-peek.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.cover-peek .cover {
+  flex: none;
+}
+
+.cover-peek-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 0 2px;
+}
+
+.cover-peek-title {
+  font-family: var(--font-serif);
+  font-size: 12.5px;
+  font-weight: 640;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cover-peek-sub {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --------------------------------------------------------------- 封面 */
+
+.cover {
+  position: relative;
+  width: var(--cover-w);
+  height: var(--cover-h);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px 7px 7px 3px;
+  overflow: hidden;
+  color: var(--cover-ink);
+  font-family: var(--font-serif);
+  box-shadow: var(--shadow-card);
+}
+
+.cover-ground {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(155deg, var(--cover-c1) 0%, var(--cover-c2) 100%);
+}
+
+.cover-gradient .cover-ground {
+  background: linear-gradient(155deg, var(--cover-c1) 0%, var(--cover-c2) 60%, var(--cover-c1) 100%);
+}
+
+.cover-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  mix-blend-mode: overlay;
+  background-image: repeating-linear-gradient(
+      68deg,
+      rgba(0, 0, 0, 0.16) 0 1px,
+      transparent 1px 5px
+    ),
+    repeating-linear-gradient(-52deg, rgba(255, 255, 255, 0.08) 0 1px, transparent 1px 6px);
+}
+
+.cover-frame {
+  position: absolute;
+  inset: 11px;
+  border: 1.5px solid var(--cover-accent);
+  border-radius: 2px;
+  opacity: 0.8;
+}
+
+.cover-frame-inset {
+  inset: 17px;
+  border-width: 1px;
+  opacity: 0.55;
+}
+
+.cover-exlibris {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 8px;
+  letter-spacing: 0.34em;
+  color: var(--cover-accent);
+  opacity: 0.9;
+}
+
+.cover-rule {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  top: 46%;
+  height: 1px;
+  background: var(--cover-accent);
+  opacity: 0.5;
+}
+
+.cover-body {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  width: 78%;
+  text-align: center;
+}
+
+.cover-title {
+  font-size: 15px;
+  font-weight: 640;
+  line-height: 1.42;
+  letter-spacing: 0.05em;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.cover-flourish {
+  width: 34px;
+  height: 1px;
+  background: var(--cover-accent);
+  opacity: 0.75;
+}
+
+.cover-author {
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  opacity: 0.78;
+}
+
+.cover-meta {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  opacity: 0.68;
+}
+
+.cover-sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, rgba(255, 255, 255, 0.14) 0%, transparent 38%, rgba(0, 0, 0, 0.16) 100%);
+  pointer-events: none;
+}
+
+.cover-minimal .cover-title {
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.cover-typewriter {
+  font-family: var(--font-mono);
+}
+
+.cover-typewriter .cover-title {
+  border: 1px solid var(--cover-accent);
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+
+.cover-image {
+  background-size: cover;
+  background-position: center;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25), var(--shadow-card);
+}
+
+.cover-plain .cover-grain,
+.cover-plain .cover-frame {
+  display: none;
+}
+
+/* ------------------------------------------- 封面：书名换位置的四种版式
+ *
+ * 这一组版式（右上角 / 竖排右侧 / 色块 / 居中细线）的书名不在正中，
+ * 所以留白、字号、线宽一律用 `--cover-u`（封面宽度的 7.55%，由
+ * BookCoverArt 内联给出）换算成 em 表达：
+ * 架子上的缩略图（60–120px）与详情页大图（200px+）排出来是同一张脸，
+ * 不需要为两处各写一套断点。
+ * 颜色仍然只取 --cover-c1 / --cover-c2 / --cover-ink / --cover-accent。
+ */
+
+.cover-corner,
+.cover-sidebar,
+.cover-panel,
+.cover-swiss {
+  font-size: var(--cover-u);
+}
+
+.cover-corner .cover-title,
+.cover-sidebar .cover-title,
+.cover-panel .cover-title,
+.cover-swiss .cover-title {
+  font-size: 1.62em;
+  line-height: 1.36;
+  letter-spacing: 0.04em;
+  width: 100%;
+  max-width: none;
+}
+
+.cover-panel .cover-title,
+.cover-swiss .cover-title {
+  font-size: 1.42em;
+}
+
+.cover-corner .cover-title,
+.cover-panel .cover-title,
+.cover-swiss .cover-title {
+  -webkit-line-clamp: 4;
+}
+
+/* 书名在右上角 ------------------------------------------------------- */
+
+.cover-corner > .cover-title {
+  position: absolute;
+  inset: 1.7em 1.6em auto 3.1em;
+  z-index: 2;
+  display: block;
+  -webkit-line-clamp: 3;
+  text-align: right;
+}
+
+.cover-corner-rule {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 3.2em;
+  height: 2px;
+  background: var(--cover-accent);
+  opacity: 0.85;
+}
+
+/* 左上角的压角短线：让右侧的书名有东西可以对位 */
+.cover-corner-mark {
+  position: absolute;
+  top: 1.9em;
+  left: 1.6em;
+  width: 2.6em;
+  height: 2px;
+  background: var(--cover-accent);
+  opacity: 0.7;
+}
+
+.cover-corner-author {
+  position: absolute;
+  right: 1.6em;
+  bottom: 3.6em;
+  z-index: 2;
+  max-width: 58%;
+  text-align: right;
+}
+
+/* 书名竖排在右侧 ----------------------------------------------------- */
+
+.cover-sidebar .cover-title {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  position: absolute;
+  top: 2.4em;
+  right: 1.5em;
+  bottom: 4.6em;
+  left: auto;
+  width: auto;
+  height: auto;
+  z-index: 2;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+  -webkit-line-clamp: none;
+  font-size: 1.5em;
+  letter-spacing: 0.12em;
+}
+
+.cover-sidebar-body {
+  position: absolute;
+  top: 2.6em;
+  bottom: 4.4em;
+  left: 1.9em;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8em;
+  width: 3.4em;
+  text-align: left;
+}
+
+.cover-sidebar-body .cover-author {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  font-size: 0.92em;
+  letter-spacing: 0.1em;
+}
+
+.cover-sidebar-body .cover-flourish {
+  width: 1.4em;
+  height: 2px;
+}
+
+/* 一道贴着右侧的竖金线，把竖排书名框住 */
+.cover-sidebar-mark {
+  position: absolute;
+  top: 2.4em;
+  bottom: 4.6em;
+  right: 0.62em;
+  width: 2px;
+  background: var(--cover-accent);
+  opacity: 0.7;
+}
+
+/* 书名压在色块上 ----------------------------------------------------- */
+
+.cover-panel {
+  position: absolute;
+  inset: 13% 10% 22%;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.3em;
+  padding: 1.5em 1.3em;
+  text-align: center;
+  border-top: 2px solid var(--cover-accent);
+  background: linear-gradient(150deg, color-mix(in srgb, var(--cover-c2) 88%, var(--cover-ink)), var(--cover-c2));
+  box-shadow: 0 0.5em 1.4em rgba(0, 0, 0, 0.28);
+}
+
+.cover-panel .cover-author {
+  font-size: 0.95em;
+  letter-spacing: 0.18em;
+  opacity: 0.8;
+}
+
+/* 居中极简：只留一条细线 --------------------------------------------- */
+
+.cover-swiss .cover-ground {
+  background: linear-gradient(180deg, var(--cover-c1) 0%, color-mix(in srgb, var(--cover-c1) 62%, var(--cover-c2)) 100%);
+}
+
+.cover-swiss .cover-grain {
+  opacity: 0.18;
+}
+
+/* 顶上那一道短金线：把这版和"正中书名"的老版式区分开 */
+.cover-label {
+  position: absolute;
+  top: 2.2em;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  width: 3.4em;
+  height: 2px;
+  background: var(--cover-accent);
+  opacity: 0.75;
+}
+
+.cover-swiss-body {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.1em;
+  width: 68%;
+  margin-top: -1.2em;
+  text-align: center;
+}
+
+.cover-swiss-body .cover-rule {
+  position: static;
+  left: auto;
+  right: auto;
+  top: auto;
+  width: 4.2em;
+  height: 1px;
+  opacity: 0.55;
+}
+
+/* --------------------------------------------------------- 空书架状态 */
+
+.shelf-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: auto;
+}
+
+.shelf-empty-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* ----------------------------------------------------------- 列表视图 */
+
+.shelf-list-group {
+  padding: 4px 20px 14px;
+}
+
+.shelf-list-title {
+  margin: 12px 6px 8px;
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+
+.book-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.book-list-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.book-list-item:hover {
+  background: var(--bg-surface);
+  border-color: var(--border);
+}
+
+.book-list-item.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-softer);
+}
+
+.book-list-item.is-missing {
+  opacity: 0.5;
+}
+
+.book-list-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 44px;
+  flex: none;
+  border-radius: 2px 4px 4px 2px;
+  box-shadow: var(--shadow-soft);
+}
+
+.book-list-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.book-list-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.book-list-name {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.book-list-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex: none;
+}
+
+.book-list-sub {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.book-list-sub .dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+.book-list-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.book-list-tag {
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: var(--accent-softer);
+  color: var(--accent);
+  font-size: 10.5px;
+}
+
+.book-list-stars {
+  display: flex;
+  gap: 1px;
+  color: var(--accent);
+  opacity: 0.75;
+  flex: none;
+}
+
+.book-list-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* 窄窗口时收掉次要信息 */
+@media (max-width: 1180px) {
+  .book-list-stars {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------- 书籍详情 */
+
+.book-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.detail-hero {
+  display: flex;
+  align-items: flex-end;
+  gap: 26px;
+  padding: 16px 18px 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-sunken) 55%, transparent), transparent 70%),
+    var(--bg-elevated);
+}
+
+.detail-hero-spine {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.detail-hero-caption {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 11px;
+}
+
+.detail-stars {
+  display: flex;
+  gap: 1px;
+  color: var(--accent);
+}
+
+.detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.detail-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 9px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--bg-elevated);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.detail-tag button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.detail-tag button:hover {
+  background: color-mix(in srgb, #b23a30 18%, transparent);
+  color: #b23a30;
+}
+
+.detail-tag-input {
+  width: 110px;
+  height: 25px;
+  font-size: 12px;
+}
+
+.detail-style {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-sunken) 40%, transparent);
+}
+
+.detail-color-row {
+  display: flex;
+  gap: 7px;
+}
+
+.detail-images {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.detail-image-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detail-image-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 132px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background-color: var(--bg-sunken);
+  background-size: cover;
+  background-position: center;
+  font-size: 11.5px;
+}
+
+.detail-image-preview.is-spine {
+  max-width: 96px;
+}
+
+.detail-image-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.detail-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+}
+
+.detail-facts > div {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.detail-facts dt {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.detail-facts dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.detail-danger {
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+/* ==========================================================================
+   筛选与排序条
+   ========================================================================== */
+
+.shelf-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 8px 30px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-app) 88%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.shelf-toolbar-left {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shelf-toolbar-spacer {
+  flex: 1;
+}
+
+.shelf-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shelf-toolbar-right .select {
+  min-width: 132px;
+}
+
+.shelf-sort-hint {
+  max-width: 240px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.shelf-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 99px;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.shelf-filter-clear:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.shelf-filter-pop {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 8px);
+  z-index: 20;
+  width: 420px;
+  max-width: min(92vw, 420px);
+  max-height: 68vh;
+  overflow-y: auto;
+  padding: 14px 16px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.shelf-filter-section + .shelf-filter-section {
+  margin-top: 12px;
+}
+
+.shelf-filter-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.shelf-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.shelf-filter-foot {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  text-align: right;
+}
+
+.shelf-empty.is-inline {
+  padding: 60px 30px;
+}
+
+/* ==========================================================================
+   连续书柜：书架层变成一格一格并排，放不下就换行，上下不留页面式空隙
+   ========================================================================== */
+
+.shelf-scroll.is-continuous {
+  padding-top: 14px;
+}
+
+.shelf-continuous {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  /*
+   * 连续书柜是"几个书架并排"，不是一个无缝大书架 ——
+   * 每一格有自己的边框（见 .shelf-bay），所以这里要留出间隔，
+   * 让人一眼看出这是两个独立的书架。
+   *
+   * 横着排不下时不换行，改成左右滚动：书柜本来就是一面墙，
+   * 换行会让人以为存在第二面墙。
+   */
+  gap: 26px 22px;
+  padding: 0 30px 14px;
+  /*
+   * 横向滚动**不在这里**做。
+   *
+   * 这个元素的高度跟着书架走，滚动条就会落在书柜的最下沿 ——
+   * 书架高过一屏时，得先往下滚到底才能看到横向滚动条（用户报的就是这个）。
+   * 改成由视口高度的 .shelf-view 负责横向滚动（见那边的注释），
+   * 滚动条就固定在屏幕下方了。
+   */
+  overflow: visible;
+  scrollbar-width: thin;
+}
+
+.shelf-bay {
+  /* 不换行之后要靠 flex 定宽：既不缩得比内容窄，也不长过上限 */
+  flex: 0 0 auto;
+  width: var(--bay-max, 560px);
+  max-width: var(--bay-max, 560px);
+  position: relative;
+  /* 书架外框：侧面立板 + 顶板的感觉，把一格框成一个独立书架。
+     真实书柜是方的，所以这里一律不要圆角。 */
+  padding: 14px 12px 0;
+  border: 1px solid color-mix(in srgb, var(--shelf-plank-edge) 75%, transparent);
+  border-radius: 0;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--shelf-plank-top) 30%, var(--shelf-back)) 0%,
+      var(--shelf-back) 26%,
+      color-mix(in srgb, var(--shelf-back) 88%, #000) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.14),
+    0 12px 28px -14px rgba(0, 0, 0, 0.55);
+}
+
+/* 格子里相邻两层紧贴（沿用全局的 25px），最后一层要留出木板的位置 */
+.shelf-continuous .shelf-unit:last-child .shelf-row {
+  margin-bottom: 25px;
+}
+
+/* 格子里每层木板紧贴着下一层，读起来是一面连续的墙 */
+.shelf-continuous .shelf-row {
+  margin-left: 0;
+  margin-right: 0;
+  margin-bottom: 0;
+  padding-left: 18px;
+  padding-right: 18px;
+}
+
+.shelf-continuous .shelf-unit:last-child .shelf-row {
+  margin-bottom: 18px;
+}
+
+/* ==========================================================================
+   打开书籍的过场动画
+   四拍：抽出书架 → 飞到眼前转正 → 封面翻开 → 淡出露出阅读界面
+   ========================================================================== */
+
+.open-anim {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+
+.open-anim-veil {
+  position: absolute;
+  inset: 0;
+  /*
+   * 关键：飞到眼前之后幕布必须是**完全不透明**的。
+   * 以前这里只有 78% 的底色，阅读界面从第一帧就能透出来，
+   * 看起来就成了"书早都打开了、动画在一边自顾自播"。
+   */
+  background: var(--bg-app);
+  opacity: 0;
+  transition: opacity 260ms ease;
+}
+
+/* 从书飞到眼前那一刻起一路盖住，直到最后一拍才掀开 */
+.open-anim.is-veiled .open-anim-veil {
+  opacity: 1;
+}
+
+.open-anim.is-leaving .open-anim-veil {
+  opacity: 0;
+  transition: opacity 360ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.open-anim-book {
+  position: fixed;
+  perspective: 1400px;
+  transition:
+    left 420ms cubic-bezier(0.22, 0.9, 0.24, 1),
+    top 420ms cubic-bezier(0.22, 0.9, 0.24, 1),
+    width 420ms cubic-bezier(0.22, 0.9, 0.24, 1),
+    height 420ms cubic-bezier(0.22, 0.9, 0.24, 1),
+    opacity 360ms ease,
+    transform 420ms cubic-bezier(0.22, 0.9, 0.24, 1);
+}
+
+/* 第一拍：抽出来一点，并给个阴影 */
+.open-anim.stage-1 .open-anim-book {
+  transform: translateY(-16px) rotateY(-16deg) scale(1.05);
+}
+
+/* 最后一拍：整本书一边放大一边褪去，像化进了正文里 */
+.open-anim.is-leaving .open-anim-book {
+  opacity: 0;
+  transform: scale(1.06);
+}
+
+.open-anim-simple.is-leaving .open-anim-book {
+  transform: scale(1.02);
+}
+
+.open-anim-scene {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+
+/* 封面下面的那页纸 */
+.open-anim-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12% 10%;
+  border-radius: 2px 4px 4px 2px;
+  background: linear-gradient(180deg, #fdfaf4, #f4ece0);
+  box-shadow: inset 0 0 0 1px rgba(120, 96, 64, 0.16);
+}
+
+.open-anim-page-rule {
+  height: 1px;
+  background: rgba(120, 96, 64, 0.18);
+}
+
+/* 封面：以左边为书脊轴翻开 */
+.open-anim-cover {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+  transform: rotateY(0deg);
+  transform-style: preserve-3d;
+  transition: transform 380ms cubic-bezier(0.4, 0.8, 0.3, 1);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+}
+
+.open-anim.stage-3 .open-anim-cover {
+  transform: rotateY(-158deg);
+}
+
+.open-anim-cover .cover {
+  width: 100%;
+  height: 100%;
+}
+
+/* 翻开前盖住封面的那层书脊面 */
+.open-anim-spine-face {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background-size: cover;
+  background-position: center;
+  box-shadow: inset -3px 0 8px rgba(0, 0, 0, 0.35), inset 3px 0 6px rgba(255, 255, 255, 0.1);
+  opacity: 1;
+  transition: opacity 200ms ease;
+}
+
+.open-anim.stage-3 .open-anim-spine-face {
+  opacity: 0;
+}
+
+.open-anim-spine-title {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  max-height: 76%;
+  overflow: hidden;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--spine-ink, #f2e8d5);
+}
+
+/* 封面左侧那道书脊 */
+.open-anim-spine {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5%;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.34), rgba(0, 0, 0, 0.06));
+}
+
+/* 简洁模式：只做一次淡入放大，不翻封面 */
+.open-anim-simple .open-anim-cover {
+  transition: none;
+}
+
+.open-anim-simple.stage-3 .open-anim-cover {
+  transform: none;
+}
+
+/* ==========================================================================
+   多选与批量管理
+   —— 选中态、工具栏里的「多选」开关、以及选中后出现的批量操作条
+   ========================================================================== */
+
+/* 「多选」开关：和筛选按钮同一档高度，开启后整颗变实心 */
+.shelf-multi-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  flex: none;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.shelf-multi-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.shelf-multi-toggle.is-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.shelf-toolbar-selected {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--accent-softer);
+  color: var(--accent);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ 选中态 */
+
+/* 选中的书：整本书罩一层主色，书脊再加一圈亮边。
+   亮度不同、书脊颜色也可能很亮，所以用 inset 光晕而不是纯色描边。 */
+.book.is-selected .book-3d {
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 72%, transparent))
+    drop-shadow(0 0 1px color-mix(in srgb, var(--accent) 85%, transparent));
+}
+
+.book.is-selected .spine,
+.book.is-selected .book-cover-face {
+  box-shadow:
+    0 0 0 2px var(--accent),
+    0 0 12px color-mix(in srgb, var(--accent) 50%, transparent),
+    var(--shadow-book);
+}
+
+.book.is-selected:hover .book-3d {
+  filter: drop-shadow(0 0 9px color-mix(in srgb, var(--accent) 80%, transparent));
+}
+
+/* 选中记号：书顶上一个小圆勾，一眼能数清选了几本 */
+.book.is-selected::after {
+  content: '';
+  position: absolute;
+  z-index: 7;
+  left: 50%;
+  top: -7px;
+  width: 9px;
+  height: 9px;
+  margin-left: -4.5px;
+  border: 1.5px solid var(--bg-elevated);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 60%, transparent);
+  pointer-events: none;
+}
+
+/* 列表视图：行外面包一层，批量条选中时给整行加一道主色侧边 */
+.book-list-row {
+  display: block;
+}
+
+.book-list-row .book-list-item.is-selected {
+  border-color: var(--accent);
+  background: var(--accent-softer);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* -------------------------------------------------------------- 批量操作条 */
+
+.batch-bar {
+  position: sticky;
+  /* 工具栏的高度 + 一点缝：贴上去时正好接在工具栏下面 */
+  top: calc(var(--shelf-toolbar-h, 47px) + 6px);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+  flex: none;
+  padding: 8px 30px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-app) 92%, transparent);
+  backdrop-filter: blur(8px);
+  animation: fade-in var(--dur-fast) var(--ease);
+}
+
+.batch-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.batch-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.batch-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 99px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.batch-all:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.batch-hint {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* 窄窗口时先把提示收起来，让按钮留在一条线上 */
+@media (max-width: 1180px) {
+  .batch-hint {
+    display: none;
+  }
+}
+
+.batch-spacer {
+  flex: 1;
+  min-width: 10px;
+}
+
+.batch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.batch-group {
+  position: relative;
+  display: inline-flex;
+}
+
+.batch-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  width: 268px;
+  max-width: min(92vw, 320px);
+  padding: 12px 13px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+}
+
+.batch-pop.is-style {
+  width: 304px;
+}
+
+.batch-pop.is-rating,
+.batch-pop.is-status {
+  width: 216px;
+}
+
+.batch-pop-title {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.batch-pop-title.is-sub {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.batch-pop-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.batch-pop-note {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.batch-pop-empty {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.batch-input {
+  width: 100%;
+}
+
+.batch-tag-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+/* 样式列表 */
+
+.batch-style-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.batch-style-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.batch-style-item:hover {
+  background: var(--accent-softer);
+}
+
+.batch-style-item.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.batch-style-swatch {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+
+.batch-style-swatch.is-base {
+  background: repeating-linear-gradient(45deg, var(--bg-sunken) 0 4px, var(--border) 4px 8px);
+}
+
+.batch-style-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-style-tag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+/* 评分 / 状态 */
+
+.batch-rating {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.batch-star {
+  min-width: 40px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.batch-star:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.batch-status-item {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.batch-status-item:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* 批量条里的「删除」用危险色描边，和右键菜单的危险项一个观感 */
+.batch-actions .btn-danger {
+  border: 1px solid color-mix(in srgb, #b23a30 40%, transparent);
+}
+
+[data-dark='true'] .batch-actions .btn-danger {
+  border-color: color-mix(in srgb, #e88b81 40%, transparent);
+}
+
+/* ==========================================================================
+   右键菜单：二级菜单
+   「阅读状态」「移动到书架层」这类枚举项收进一级菜单里的一行，
+   hover / 点击 / 方向键在侧面弹出子菜单。
+   ========================================================================== */
+
+.context-sub-host {
+  /* 刻意不定位：子菜单的包含块是 .context-menu（fixed），量出来的 top 才好用 */
+  position: static;
+}
+
+.context-item.is-open {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.context-sub-value {
+  margin-left: auto;
+  max-width: 108px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-item:hover .context-sub-value,
+.context-item.is-open .context-sub-value {
+  color: inherit;
+}
+
+.context-sub-caret {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.context-item:hover .context-sub-caret,
+.context-item.is-open .context-sub-caret {
+  color: inherit;
+}
+
+.context-submenu {
+  position: absolute;
+  z-index: 1;
+  left: 100%;
+  min-width: 176px;
+  max-height: 60vh;
+  overflow-y: auto;
+  margin-left: 3px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-float);
+  animation: pop-in var(--dur-fast) var(--ease);
+}
+
+/* 贴到窗口右边时向左弹 */
+.context-submenu.is-left {
+  right: 100%;
+  left: auto;
+  margin-right: 3px;
+  margin-left: 0;
+}
+
+/* ==========================================================================
+   书籍详情：操作分区与可折叠的「书籍样式」
+   ========================================================================== */
+
+.detail-ops {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-ops .detail-danger {
+  padding-top: 10px;
+}
+
+.detail-fold {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-sunken) 40%, transparent);
+}
+
+.detail-fold-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 13px;
+  cursor: pointer;
+  user-select: none;
+  /* 干掉浏览器自带的三角，折叠状态改用下面那个箭头来表示 */
+  list-style: none;
+}
+
+.detail-fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+.detail-fold-summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.detail-fold-caret {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-muted);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+/* 收起时箭头转成"向右"，展开时朝下 */
+.detail-fold:not([open]) .detail-fold-caret {
+  transform: rotate(-90deg);
+}
+
+.detail-fold-title {
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  letter-spacing: 0.04em;
+  color: var(--text-primary);
+}
+
+.detail-fold-summary:hover .detail-fold-title {
+  color: var(--accent);
+}
+
+.detail-fold-value {
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-fold-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 13px 13px;
+}
+
+/* 折叠体里已经有一层底色，样式网格就不再叠一层描边 */
+.detail-fold-body .detail-style {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+
+/* 详情页的阅读 / 写作信息（打开次数、累计时长、翻页或字数、进度） */
+.detail-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+  padding: 0 16px 6px;
+}
+
+.detail-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+
+.detail-stat-value {
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.detail-stat-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+/* -------------------------------------------- 从书内图片提取封面 / 书脊
+ *
+ * 两个阶段共用一份外壳：先是一格格缩略图（点一张进裁剪），
+ * 再是裁剪台（图片 + 可拖的选框 + 四角把手）。
+ * 参数与书架其余浮层保持一致，深色主题下只靠令牌变色。
+ */
+
+.xcover {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 180px;
+}
+
+.xcover-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 150px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.xcover-status.is-error {
+  color: var(--danger, #c0554a);
+}
+
+.xcover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.xcover-filter {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ------------------------------------------------------------- 图片清单 */
+
+.xcover-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 9px;
+  max-height: 380px;
+  padding: 2px;
+  overflow: auto;
+}
+
+.xcover-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.xcover-card:hover,
+.xcover-card:focus-visible {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-elevated));
+  outline: none;
+}
+
+.xcover-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+}
+
+.xcover-thumb img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.xcover-thumb-fail {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.xcover-name {
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xcover-sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xcover-more {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 4px;
+}
+
+/* --------------------------------------------------------------- 裁剪台 */
+
+.xcover-crop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.xcover-crop > .field,
+.xcover-crop .field {
+  width: 100%;
+}
+
+.xcover-seg {
+  display: flex;
+  justify-content: center;
+}
+
+.xcover-stage-wrap {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    repeating-conic-gradient(color-mix(in srgb, var(--bg-sunken) 70%, transparent) 0% 25%, transparent 0% 50%)
+      50% / 16px 16px,
+    var(--bg-sunken);
+}
+
+.xcover-stage {
+  position: relative;
+  touch-action: none;
+  user-select: none;
+  box-shadow: 0 4px 14px -4px var(--shadow);
+  /*
+   * 必须裁掉溢出。
+   *
+   * 选框外面那圈变暗是 box-shadow: 0 0 0 9999px 画的，
+   * 而选框现在住在 .xcover-plane 里；只要那一层有 will-change/transform
+   * 就会为它单独建合成层，9999px 的投影会把层撑到两万像素见方 ——
+   * 渲染进程直接卡死（0.9.2 加缩放时就是这么炸的）。
+   * 裁在舞台边界内，投影就只画可见的那一块。
+   */
+  overflow: hidden;
+}
+
+.xcover-stage-img {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* 选框：外面压暗，里面留出三分之一网格方便对齐 */
+.xcover-box {
+  position: absolute;
+  cursor: move;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.44);
+  outline: 1px solid color-mix(in srgb, #ffffff 82%, transparent);
+}
+
+.xcover-box::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.26) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.26) 1px, transparent 1px);
+  background-size: calc(var(--span, 100px) / 3) 100%, 100% calc(var(--span, 100px) / 3);
+}
+
+.xcover-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--bg-elevated);
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.xcover-handle.is-nw {
+  top: -6px;
+  left: -6px;
+  cursor: nwse-resize;
+}
+
+.xcover-handle.is-ne {
+  top: -6px;
+  right: -6px;
+  cursor: nesw-resize;
+}
+
+.xcover-handle.is-sw {
+  bottom: -6px;
+  left: -6px;
+  cursor: nesw-resize;
+}
+
+.xcover-handle.is-se {
+  bottom: -6px;
+  right: -6px;
+  cursor: nwse-resize;
+}
+
+.xcover-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.xcover-facts-name {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.xcover-tip {
+  font-size: 12px;
+}
+
+/* 详情页「自定义图片」里的入口按钮：和选择图片并排，不抢视线 */
+.detail-image-actions .btn.is-extract {
+  border-style: dashed;
+}
+
+/*
+ * 连续书柜：横向滚动条**常驻**。
+ *
+ * 用 scroll 而不是 auto，是为了掐掉"滚动条出现→高度变化→排布变化→
+ * 滚动条又消失"这个来回（0.9.2 加封面版式后正好踩中，整个界面卡死、
+ * ResizeObserver 每帧狂回调）。scrollbar-gutter 只管竖向，横向得自己保证。
+ * 顺带的好处：滚动条永远钉在屏幕下方，一眼就能看到还能往右翻。
+ */
+.shelf-view.is-continuous-scroll {
+  overflow-x: scroll;
+}
+/* ------------------------------------------------- 裁剪台的缩放与平移 */
+
+.xcover-stage-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * 图片与选框一起被缩放/平移的那一层。
+ * 用 width/height 撑开（不是 transform: scale），所以里面按百分比定位的
+ * 选框天然跟着走，缩放后依然与图片严丝合缝。
+ */
+.xcover-plane {
+  position: relative;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.xcover-zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.xcover-zoom-value {
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.xcover-zoom-hint {
+  margin-left: 6px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+/*
+ * 封面贴图用 <img> 画（而不是 background-image）：
+ * 加载失败时 background-image 是静默的，<img> 的 onError 才有原因可查。
+ */
+.cover-image-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+/*
+ * 书脊朝向：书脊面恰好等于书脊宽度。
+ *
+ * `.book` 的宽度是 footprint（书脊宽 + 倾斜外扩，实测 38 + 6 = 44），
+ * 而书脊面原本 inset: 0 会被拉成 44px —— 贴图居中后两侧各留 3px 透明带，
+ * 看起来就是"书的实际宽度没变"。外扩只是给旋转留的布局余量，不该被画出来。
+ * 只作用于 spine 朝向：cover / angled 时 `.spine` 是 3D 盒子的侧面，宽度要跟进深走。
+ */
+.book .spine.is-exact-width {
+  right: auto;
+  width: var(--spine-w);
+  left: calc((var(--book-footprint, var(--spine-w)) - var(--spine-w)) / 2);
+}
+
+/*
+ * 书脊朝向 + 贴图：宽度与比例由 BookSpine 的内联样式给
+ * （width: auto + aspect-ratio），这里只把它从"铺满 footprint"改成"高度撑满、水平居中"。
+ *
+ * 背景：`.book` 的宽度是 footprint，书脊朝向下 = 书脊宽 + 倾斜外扩（实测 38 + 6）；
+ * 而算书脊宽度用的"布局高度"又比实际渲染高度大（实测 246 vs 209）。
+ * 两头一叠，盒子会比图宽一截，贴图居中后两侧各留一条透明带 ——
+ * 用户报的"书的实际宽度没变、两边有透明带"就是这个。
+ * 让浏览器用 aspect-ratio 按**真实高度**推宽度，才能严丝合缝。
+ *
+ * 注意：`.spine` 原本是 inset: 0，left/right 都为 0 会把 width: auto 又拉满，
+ * 所以必须把 right 置为 auto，再用 left + translate 居中。
+ * 只作用于 spine 朝向：cover / angled 时 `.spine` 是 3D 盒子的侧面，宽度要跟进深走。
+ */
+.book .spine.is-photo {
+  right: auto;
+  top: 0;
+  height: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+}
+/* 批量面板里的「系列 / 作者」：输入框带标签，底部一排动作按钮 */
+.batch-pop.is-meta {
+  min-width: 240px;
+}
+
+.batch-pop-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-soft, #6b5b4a);
+}
+
+.batch-pop-label .batch-input {
+  margin-top: 3px;
+}
+/*
+ * 详情页「自定义图片」里的预览。
+ * 用 <img> 铺满预览框：库里的图是 asset://local/... 本地资源，
+ * 比例由 object-fit: cover 兜住，不再出现"一片黑"或拉伸。
+ */
+.detail-image-preview {
+  position: relative;
+  overflow: hidden;
+}
+
+.detail-image-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* ------------------------------------------------------------------ 回收站 */
+
+/*
+ * 回收站与书架同构：外壳用 .shelf-view / .shelf-toolbar，
+ * 所以这里只补"列表 + 勾选 + 批量条"自己的那点样式。
+ * （旧版是个整屏独立的 .trash-head/.trash-actions 布局，连侧栏都没有，已废弃。）
+ */
+.trash-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.trash-heading {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.trash-count {
+  font-size: 12px;
+  color: var(--text-soft, #6b5b4a);
+}
+
+.trash-hint {
+  font-size: 12px;
+  color: var(--text-soft, #6b5b4a);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-hint code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.trash-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 22px 90px;
+}
+
+.trash-empty {
+  margin: 40px 0 0;
+  text-align: center;
+  color: var(--text-soft, #6b5b4a);
+}
+
+.trash-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.trash-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  cursor: pointer;
+}
+
+.trash-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+/* 选中态与书架里的书用同一种"被点上"的感觉 */
+.trash-row.is-selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.trash-check {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--bg-surface, #fff);
+  position: relative;
+}
+
+.trash-check.is-on::after {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.trash-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.trash-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.trash-meta,
+.trash-path {
+  font-size: 11.5px;
+  color: var(--text-soft, #6b5b4a);
+}
+
+.trash-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 62ch;
+  opacity: 0.75;
+}
+
+.trash-row-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+/* 侧栏那个入口：有东西时才显眼一点 */
+.nav-item.is-trash.has-items .nav-item-count {
+  color: var(--accent);
+  font-weight: 600;
+}
+/* ------------------------------------------------ 右键菜单里的二级菜单 */
+.context-sub {
+  display: flex;
+  flex-direction: column;
+}
+
+.context-sub-head {
+  gap: 6px;
+}
+
+.context-sub-label {
+  flex: none;
+}
+
+.context-sub-value {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--text-soft, #6b5b4a);
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-sub-caret {
+  width: 0;
+  height: 0;
+  flex: none;
+  margin-left: 4px;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid color-mix(in srgb, var(--text-primary) 55%, transparent);
+  transition: transform 120ms ease;
+}
+
+.context-sub-caret.is-open {
+  transform: rotate(90deg);
+}
+
+.context-sub-body {
+  display: flex;
+  flex-direction: column;
+  margin: 2px 0 4px 10px;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.context-item.is-sub {
+  font-size: 12.5px;
+}
+
+/* 当前生效的那一项打勾 */
+.context-item.is-checked::after {
+  content: '✓';
+  margin-left: 6px;
+  color: var(--accent);
+  font-size: 12px;
+}

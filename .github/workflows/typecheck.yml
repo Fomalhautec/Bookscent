@@ -1,0 +1,34 @@
+name: typecheck
+
+# 只做最轻的守卫：类型检查 + 构建能否通过。
+# 不在这里跑 Electron 的端到端探针（那套需要图形环境与本机样本文件，见 README 的“安装与排错”）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  typecheck:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          # 与本地开发用的 pnpm 大版本保持一致，--frozen-lockfile 才不会因为版本差异报错
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --ignore-scripts：跳过 postinstall 里下载 Electron 二进制（类型检查不需要它，CI 也快得多）
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: 类型检查
+        run: pnpm typecheck
+
+      - name: 构建产物
+        run: pnpm build

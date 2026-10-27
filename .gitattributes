@@ -1,0 +1,36 @@
+# 换行与二进制文件的统一约定
+#
+# 为什么需要它：这个项目在 Windows 上开发，源码里混着 CRLF 与 LF。
+# 统一成"仓库里一律 LF、二进制不转换"之后，diff 才干净，跨平台协作也不会整片显示改动。
+
+* text=auto eol=lf
+
+# 源码与文档
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.js    text eol=lf
+*.cjs   text eol=lf
+*.mjs   text eol=lf
+*.json  text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# PowerShell 脚本在 Windows 上运行，保留 CRLF 更省事
+*.ps1   text eol=crlf
+
+# 二进制：不要做任何文本转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.pdf   binary
+*.epub  binary
+*.docx  binary
+*.zip   binary
+*.exe   binary
+*.node  binary

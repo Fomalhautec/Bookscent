@@ -1,0 +1,80 @@
+appId: com.bookscent.note
+productName: Bookscent
+copyright: Copyright © 2026 Bookscent · 书香笔记
+
+directories:
+  output: release
+  buildResources: build
+
+# 只打包构建产物；生产依赖由 electron-builder 自动收集
+files:
+  - out/**/*
+  - package.json
+  - build/icon.png
+  - '!**/*.map'
+  - '!**/*.ts'
+
+asar: true
+npmRebuild: false
+buildDependenciesFromSource: false
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+    # 免安装、免自解压的绿色版：解压即用，绕开 SmartScreen 对未签名 exe 的拦截
+    - target: zip
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  executableName: Bookscent
+  # 注册为这些格式的「打开方式」（HKCU，perMachine: false 不需要管理员权限）。
+  # 只登记"本应用能打开"，不会偷改用户已有的默认程序；是否设为默认由用户在系统里点。
+  # 双击关联文件时应用会带上文件路径启动，走「临时打开」：不入库，可一键添加到书架。
+  fileAssociations:
+    - ext: epub
+      name: EPUB 电子书
+      description: EPUB 电子书
+      role: Viewer
+    - ext: pdf
+      name: PDF 文档
+      description: PDF 文档
+      role: Viewer
+    - ext: md
+      name: Markdown 文稿
+      description: Markdown 文稿
+      role: Editor
+    - ext: markdown
+      name: Markdown 文稿
+      description: Markdown 文稿
+      role: Editor
+    - ext: txt
+      name: 文本文稿
+      description: 文本文稿
+      role: Editor
+    - ext: docx
+      name: Word 文档
+      description: Word 文档（只读正文）
+      role: Viewer
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 书香笔记
+  installerLanguages:
+    - zh_CN
+  language: '2052'
+  artifactName: ${productName}-${version}-Setup.${ext}
+  uninstallDisplayName: 书香笔记 Bookscent
+
+portable:
+  artifactName: ${productName}-${version}-Portable.${ext}

@@ -1,0 +1,87 @@
+{
+  "name": "bookscent",
+  "version": "0.11.0",
+  "description": "书香笔记 Bookscent — 仿真实体书架的 Windows 桌面笔记与文档阅读应用",
+  "main": "out/main/index.js",
+  "author": "Bookscent",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fomalhautec/Bookscent.git"
+  },
+  "homepage": "https://github.com/Fomalhautec/Bookscent#readme",
+  "bugs": {
+    "url": "https://github.com/Fomalhautec/Bookscent/issues"
+  },
+  "keywords": [
+    "electron",
+    "react",
+    "typescript",
+    "notes",
+    "markdown",
+    "epub",
+    "pdf",
+    "ebook-reader",
+    "bookshelf",
+    "translation",
+    "vocabulary",
+    "windows"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "postinstall": "node scripts/ensure-electron.mjs",
+    "dev": "electron-vite dev",
+    "preview": "electron-vite preview",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "icon": "powershell -ExecutionPolicy Bypass -File scripts/make-icon.ps1",
+    "pack": "electron-vite build && electron-builder --dir",
+    "dist": "electron-vite build && electron-builder --win",
+    "dist:portable": "electron-vite build && node scripts/package-portable.mjs",
+    "deploy": "node scripts/deploy-local.mjs",
+    "deploy:launch": "node scripts/deploy-local.mjs --launch",
+    "shots": "node scripts/preview.mjs",
+    "shots:real": "node scripts/capture-real.mjs",
+    "verify:html": "node scripts/verify-html-notes.mjs",
+    "verify:app": "node scripts/verify-app.mjs",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "word-extractor": "^1.0.4"
+  },
+  "devDependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language": "^6.13.1",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.43.14",
+    "@electron/packager": "^20.3.0",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "abcjs": "^6.7.1",
+    "codemirror": "^6.0.2",
+    "dompurify": "^3.4.16",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "mammoth": "^1.13.0",
+    "marked": "^18.1.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.4.299",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "zustand": "^5.0.15"
+  }
+}

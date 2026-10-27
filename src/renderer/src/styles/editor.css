@@ -1,0 +1,1392 @@
+/* ==========================================================================
+   书香笔记 · 编辑 / 预览模块
+   写作面是一张「纸」：居中、限宽、行距宽松；预览则是 Typora 质感的排版。
+   颜色一律取自 base.css 的主题令牌，深色主题通过 html[data-dark='true'] 自动生效。
+   ========================================================================== */
+
+.bs-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.bs-editor-center {
+  align-items: center;
+  justify-content: center;
+}
+
+/* --------------------------------------------------------------- 头部 */
+
+.bs-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 84%, var(--bg-app));
+}
+
+.bs-header-spacer {
+  flex: 1;
+  min-width: 6px;
+}
+
+.bs-header-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 130px;
+  max-width: 300px;
+}
+
+.bs-title-input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  outline: none;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.bs-title-input:hover {
+  background: var(--bg-sunken);
+}
+
+.bs-title-input:focus {
+  border-color: var(--accent);
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 3px var(--accent-softer);
+}
+
+.bs-dirty {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-softer);
+}
+
+.bs-format-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 99px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+}
+
+.bs-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ------------------------------------------------------- 导出下拉菜单 */
+
+.bs-export {
+  position: relative;
+  display: inline-flex;
+}
+
+.bs-export .btn svg:last-child {
+  margin-left: 2px;
+  opacity: 0.65;
+}
+
+/* 点外面就关：铺一层透明遮罩，比全局事件监听简单也更稳 */
+.bs-export-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.bs-export-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  min-width: 226px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-float);
+}
+
+.bs-export-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.bs-export-item:hover:not(:disabled) {
+  background: var(--accent-softer);
+}
+
+.bs-export-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.bs-export-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--accent);
+}
+
+.bs-export-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.bs-export-label {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.bs-export-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.bs-appearance {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0 10px;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.bs-appearance-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  width: 188px;
+}
+
+.bs-appearance-item.is-narrow {
+  width: 146px;
+}
+
+/*
+ * 关键：`input[type=range]` 的固有最小宽度约 129px，flex 项默认 min-width:auto
+ * 会拒绝再缩小，于是整行撑破 188px 的容器，字号那一项的数值就压到下一项
+ * 「行高」的标签上。给 0 才允许它随容器收缩。
+ */
+.bs-appearance-item .slider-row {
+  min-width: 0;
+  flex: 1;
+}
+
+.bs-appearance-item .slider {
+  min-width: 0;
+}
+
+.bs-appearance-item .slider-value {
+  flex: none;
+  min-width: 38px;
+}
+
+/* 头部这一格只有 140~188px，数值框收窄一点，给滑杆留下拖动的余地 */
+.bs-appearance-item .slider-input {
+  width: 46px;
+  min-width: 38px;
+  height: 24px;
+  padding: 0 5px;
+  font-size: 11.5px;
+}
+
+.bs-appearance-label {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.bs-appearance-item .select-wrap,
+.bs-appearance-item .select {
+  height: 26px;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------- 工具栏 */
+
+.bs-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  flex: none;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 55%, var(--bg-app));
+}
+
+.bs-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.bs-tool-group .icon-btn {
+  width: 27px;
+  height: 27px;
+}
+
+.bs-tool-sep {
+  width: 1px;
+  height: 17px;
+  margin: 0 5px;
+  background: var(--border);
+}
+
+.bs-tool-note {
+  margin-left: 8px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------------- 提示条 */
+
+.bs-banner {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: none;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, #b5872e 14%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.bs-banner svg {
+  flex: none;
+  color: #b5872e;
+}
+
+.bs-banner-spacer {
+  flex: 1;
+}
+
+/* --------------------------------------------------------------- 主体 */
+
+.bs-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.bs-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.bs-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bs-pane.is-full,
+.bs-main.is-edit .bs-pane.is-editor,
+.bs-main.is-preview .bs-pane.is-preview {
+  flex: 1;
+}
+
+.bs-main.is-split .bs-pane.is-editor {
+  flex: 1 1 50%;
+  border-right: 1px solid var(--border);
+}
+
+.bs-main.is-split .bs-pane.is-preview {
+  flex: 1 1 50%;
+}
+
+.bs-pane-center {
+  align-items: center;
+  justify-content: center;
+}
+
+/* --------------------------------------------------------- 编辑器外壳 */
+
+.bs-cm-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bs-cm-host .cm-editor {
+  height: 100%;
+}
+
+.bs-cm-host .cm-scroller {
+  overflow: auto;
+}
+
+/* 写作面：居中限宽的纸 */
+.bs-pane.is-editor .cm-content {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 30px;
+}
+
+.bs-pane.is-editor .cm-gutters {
+  position: absolute;
+  right: 6px;
+  border: none;
+  background: transparent;
+  opacity: 0.5;
+}
+
+.bs-pane.is-editor .cm-editor {
+  position: relative;
+}
+
+.bs-focus-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
+}
+
+/* 专注模式：压暗当前段落以外的内容 */
+.bs-editor.is-focus .bs-pane.is-editor .cm-line {
+  opacity: 0.28;
+  filter: saturate(0.4);
+  transition: opacity var(--dur) var(--ease);
+}
+
+.bs-editor.is-focus .bs-pane.is-editor .cm-line:has(.bs-focus-dot) {
+  opacity: 1;
+  filter: none;
+}
+
+.bs-editor.is-focus .bs-pane.is-preview .bs-prose > * {
+  opacity: 0.32;
+  transition: opacity var(--dur) var(--ease);
+}
+
+.bs-editor.is-focus .bs-pane.is-preview .bs-prose > *:hover {
+  opacity: 1;
+}
+
+/* --------------------------------------------------------------- 大纲 */
+
+.bs-outline {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 208px;
+  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 60%, var(--bg-app));
+  overflow: hidden;
+}
+
+.bs-outline-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 9px 12px 7px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-serif);
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.bs-outline-head svg {
+  color: var(--accent);
+}
+
+.bs-outline-count {
+  margin-left: auto;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.bs-outline-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 6px 14px;
+}
+
+.bs-outline-empty {
+  padding: 16px 14px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-muted);
+}
+
+.bs-outline-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.bs-outline-item svg {
+  flex: none;
+  opacity: 0.5;
+}
+
+.bs-outline-item:hover {
+  background: var(--accent-softer);
+  color: var(--text-primary);
+}
+
+.bs-outline-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.bs-outline-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ 状态栏 */
+
+.bs-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: none;
+  height: var(--statusbar-h);
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 70%, var(--bg-app));
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.bs-status-spacer {
+  flex: 1;
+}
+
+.bs-status-item.is-dirty {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* --------------------------------------------------------- 只读容器 */
+
+.bs-preview-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scroll-behavior: smooth;
+  background: var(--bg-app);
+  /* 让标题的 offsetTop 相对这个滚动容器，锚点跳转才算得准 */
+  position: relative;
+}
+
+.bs-ro-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 32px;
+}
+
+.bs-image-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  padding: 26px 24px 48px;
+}
+
+.bs-image-paper {
+  margin: 0;
+  padding: 18px;
+  max-width: 900px;
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-card);
+}
+
+.bs-image-paper img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-sm);
+}
+
+.bs-image-paper figcaption {
+  margin-top: 10px;
+  text-align: center;
+  font-family: var(--font-serif);
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------- 信息卡 */
+
+.bs-info-card {
+  width: 100%;
+  max-width: 460px;
+  padding: 24px 24px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-card);
+  text-align: center;
+}
+
+.bs-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  background: var(--accent-softer);
+  color: var(--accent);
+}
+
+.bs-info-title {
+  font-family: var(--font-serif);
+  font-size: 15.5px;
+  font-weight: 650;
+}
+
+.bs-info-detail {
+  margin-top: 7px;
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text-muted);
+}
+
+.bs-info-rows {
+  margin: 16px 0 0;
+  border-top: 1px solid var(--border);
+  text-align: left;
+}
+
+.bs-info-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+
+.bs-info-row dt {
+  flex: none;
+  width: 46px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.bs-info-row dd {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.bs-info-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+/* ==========================================================================
+   预览排版（Typora 质感的「纸」）
+   ========================================================================== */
+
+.bs-prose {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 34px 32px 26vh;
+  font-family: var(--font-serif);
+  font-size: 15.5px;
+  line-height: 1.85;
+  color: var(--text-primary);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.bs-prose.is-readonly {
+  font-size: 15px;
+}
+
+.bs-prose > *:first-child {
+  margin-top: 0;
+}
+
+.bs-prose h1,
+.bs-prose h2,
+.bs-prose h3,
+.bs-prose h4,
+.bs-prose h5,
+.bs-prose h6 {
+  margin: 1.9em 0 0.75em;
+  font-family: var(--font-serif);
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  scroll-margin-top: 20px;
+}
+
+.bs-prose h1 {
+  padding-bottom: 0.32em;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.62em;
+}
+
+.bs-prose h2 {
+  padding-bottom: 0.28em;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+  font-size: 1.34em;
+}
+
+.bs-prose h3 {
+  font-size: 1.16em;
+}
+
+.bs-prose h4 {
+  font-size: 1.03em;
+  color: var(--text-secondary);
+}
+
+.bs-prose h5,
+.bs-prose h6 {
+  font-size: 0.96em;
+  color: var(--text-secondary);
+}
+
+.bs-prose p {
+  margin: 0 0 1.1em;
+}
+
+.bs-prose strong,
+.bs-prose b {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.bs-prose em,
+.bs-prose i {
+  font-style: italic;
+  color: var(--text-secondary);
+}
+
+.bs-prose del,
+.bs-prose s {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+}
+
+.bs-prose mark {
+  padding: 0.08em 0.25em;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: inherit;
+}
+
+.bs-prose a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.bs-prose a:hover {
+  border-bottom-color: var(--accent);
+}
+
+.bs-prose hr {
+  height: 1px;
+  margin: 2.1em 0;
+  border: 0;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--border) 12%,
+    var(--border) 88%,
+    transparent
+  );
+}
+
+.bs-prose blockquote {
+  margin: 1.2em 0;
+  padding: 0.15em 0 0.15em 1.1em;
+  border-left: 3px solid var(--accent);
+  border-radius: 0 4px 4px 0;
+  background: linear-gradient(to right, var(--accent-softer), transparent 82%);
+  color: var(--text-secondary);
+  font-style: normal;
+}
+
+.bs-prose blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.bs-prose blockquote blockquote {
+  margin-left: 0;
+  opacity: 0.9;
+}
+
+.bs-prose ul,
+.bs-prose ol {
+  margin: 0 0 1.1em;
+  padding-left: 1.6em;
+}
+
+.bs-prose li {
+  margin: 0.3em 0;
+}
+
+.bs-prose li::marker {
+  color: var(--text-muted);
+}
+
+.bs-prose li > p {
+  margin: 0.3em 0;
+}
+
+/* 待办清单：真复选框 */
+.bs-prose li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -1.35em;
+  padding-left: 0.15em;
+}
+
+.bs-prose li:has(> input[type='checkbox']:checked) {
+  color: var(--text-muted);
+}
+
+.bs-prose input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin: 0 0.5em 0 0;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  vertical-align: -2px;
+  cursor: default;
+}
+
+.bs-prose input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.bs-prose input[type='checkbox']::after {
+  content: '';
+  display: block;
+  width: 7px;
+  height: 4px;
+  margin: 2px 0 0 3px;
+  border-left: 2px solid var(--text-on-accent, #fff);
+  border-bottom: 2px solid var(--text-on-accent, #fff);
+  transform: rotate(-45deg) scale(0);
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.bs-prose input[type='checkbox']:checked::after {
+  transform: rotate(-45deg) scale(1);
+}
+
+/* 代码 */
+.bs-prose code {
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-sunken);
+  font-family: var(--font-mono);
+  font-size: 0.87em;
+  color: color-mix(in srgb, var(--accent) 62%, var(--text-primary));
+}
+
+.bs-prose pre {
+  margin: 1.3em 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 1px 3px var(--shadow);
+  overflow: auto;
+}
+
+.bs-prose pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+/* 表格：隔行变色 */
+.bs-prose table {
+  width: 100%;
+  margin: 1.3em 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+}
+
+.bs-prose thead th {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+  font-weight: 650;
+  text-align: left;
+}
+
+.bs-prose td {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-soft, var(--border));
+}
+
+.bs-prose tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-sunken) 55%, transparent);
+}
+
+.bs-prose tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.bs-prose img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.3em auto;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+}
+
+.bs-prose kbd {
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+}
+
+.bs-prose details {
+  margin: 1.1em 0;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+}
+
+.bs-prose summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.bs-prose-empty {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 8px 32px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ---------------------------------------------------- 转换提示（折叠） */
+
+.bs-warnings {
+  max-width: 760px;
+  margin: 0 auto 32px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.bs-warnings summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.bs-warnings ul {
+  margin: 9px 0 0;
+  padding-left: 18px;
+  line-height: 1.75;
+}
+
+.bs-warnings li {
+  margin: 3px 0;
+}
+
+/* ==========================================================================
+   五线谱（```abc / ```abcjs）
+   占位块先渲染出来，abcjs 排好版后把 <svg> 塞进 .bs-music-score。
+   源码始终留在 <details> 里，渲染失败也不会丢内容。
+   ========================================================================== */
+
+.bs-prose .bs-music {
+  margin: 1.6em 0;
+  padding: 14px 16px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-sunken) 70%, var(--bg-surface));
+}
+
+.bs-music-score {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.bs-music-score svg {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+.bs-music-status {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.bs-music-status.is-error {
+  color: #b0603a;
+}
+
+.bs-music-source {
+  margin-top: 10px;
+  border: 0;
+  border-top: 1px dashed var(--border);
+  background: transparent;
+  padding: 6px 0 0;
+}
+
+.bs-music-source summary {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.bs-music-source pre {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  background: var(--bg-surface);
+}
+
+.bs-music-source code {
+  font-size: 12px;
+}
+
+/* ==========================================================================
+   目录（独立一行的 [TOC] / [[toc]]）
+   ========================================================================== */
+
+.bs-prose .bs-toc {
+  margin: 1.4em 0 1.8em;
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-sunken) 55%, transparent);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+}
+
+.bs-toc-title {
+  margin: 0 0 8px;
+  font-family: var(--font-serif);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  color: var(--text-secondary);
+}
+
+.bs-toc ul {
+  margin: 0;
+  padding-left: 1.25em;
+  list-style: none;
+}
+
+.bs-toc > ul {
+  padding-left: 0;
+}
+
+.bs-toc li {
+  margin: 2px 0;
+  position: relative;
+}
+
+.bs-toc li::marker {
+  content: '';
+}
+
+.bs-toc a {
+  display: inline-block;
+  padding: 1px 0;
+  border-bottom: 0;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.bs-toc a:hover {
+  color: var(--accent);
+}
+
+.bs-toc-lv1 > a {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bs-toc-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+/* ------------------------------------------------------------ 窄窗口 */
+@media (max-width: 1180px) {
+  .bs-appearance-item {
+    width: 140px;
+  }
+
+  .bs-appearance-item.is-narrow {
+    width: 118px;
+  }
+
+  .bs-appearance-item .bs-appearance-label {
+    display: none;
+  }
+}
+
+@media (max-width: 940px) {
+  .bs-appearance {
+    display: none;
+  }
+
+  .bs-outline {
+    width: 172px;
+  }
+
+  .bs-pane.is-editor .cm-content,
+  .bs-prose {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+}
+
+/* ==========================================================================
+   HTML 笔记（note:// 独立来源整页加载）
+   —— 页面本身自带样式，这里只负责"外框"：一条工具栏 + 一个撑满的舞台。
+   ========================================================================== */
+
+.bs-html {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg-app);
+}
+
+.bs-html-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-surface) 82%, var(--bg-app));
+}
+
+.bs-html-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.bs-html-hint {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bs-html-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: color-mix(in srgb, #b5872e 16%, transparent);
+  color: #a0741f;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.bs-html-grow {
+  flex: 1;
+}
+
+.bs-html-zoom {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+
+.bs-html-zoom .icon-btn {
+  width: 24px;
+  height: 24px;
+}
+
+.bs-html-zoom-value {
+  min-width: 44px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.bs-html-zoom-value:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.bs-html-missing {
+  flex: none;
+  margin: 0;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, #b5872e 12%, var(--bg-surface));
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.bs-html-missing ul {
+  margin: 5px 0;
+  padding-left: 18px;
+}
+
+.bs-html-missing code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.bs-html-missing p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.bs-html-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-surface);
+}
+
+.bs-html-frame {
+  display: block;
+  border: 0;
+  background: #fff;
+  /* 宽度/高度/transform 由组件按缩放动态给出 */
+}
+
+.bs-html-loading,
+.bs-html-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--bg-app);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.bs-html-loading {
+  flex-direction: row;
+  font-size: 12.5px;
+}
+
+.bs-html-loading .spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--accent-soft);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.bs-html-error {
+  padding: 30px;
+}
+
+.bs-html-error h3 {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  color: var(--text-secondary);
+}
+
+.bs-html-error p {
+  max-width: 520px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  word-break: break-all;
+}
+
+.bs-html-error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ------------------------------------------------------- 书签位置标记 */
+
+/*
+ * 有书签的行：下面一条有厚度的线（用户要的"下划一定厚度的线"），
+ * 鼠标移上去整行浮一层底色，一眼知道"这里有书签、可以点"。
+ */
+.cm-bookmark-line {
+  border-bottom: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.cm-bookmark-line:hover {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+/* 刚从书签跳过来：闪一下，提示"就是这里" */
+.cm-bookmark-flash {
+  animation: cm-bookmark-flash 1.4s ease-out;
+}
+
+@keyframes cm-bookmark-flash {
+  0% {
+    background: color-mix(in srgb, var(--accent) 42%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+/* 导出弹窗里两个后续动作开关 */
+.bs-export-follow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px dashed color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.bs-export-follow .switch-row {
+  font-size: 12px;
+}
+
+.bs-export-follow-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-soft, #6b5b4a);
+}
